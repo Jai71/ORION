@@ -1,0 +1,65 @@
+{
+  "model": "pretrain",
+  "model_path": "models/pretrained_model.keras",
+  "accuracy": 0.9872448979591837,
+  "macro_f1": 0.9871455581575015,
+  "weighted_f1": 0.9871455581575018,
+  "pr_auc": {
+    "none": 0.9953025229480204,
+    "anaphylaxis": 0.9917538921018654,
+    "malignant_hyperthermia": 0.9994065628204966,
+    "respiratory_depression": 0.9981844105044854
+  },
+  "per_class": {
+    "none": {
+      "precision": 0.9982142857142857,
+      "recall": 0.9506802721088435,
+      "f1": 0.9738675958188153,
+      "support": 588
+    },
+    "anaphylaxis": {
+      "precision": 0.978369384359401,
+      "recall": 1.0,
+      "f1": 0.9890664423885618,
+      "support": 588
+    },
+    "malignant_hyperthermia": {
+      "precision": 0.9816360601001669,
+      "recall": 1.0,
+      "f1": 0.9907329401853412,
+      "support": 588
+    },
+    "respiratory_depression": {
+      "precision": 0.9915540540540541,
+      "recall": 0.9982993197278912,
+      "f1": 0.9949152542372881,
+      "support": 588
+    }
+  },
+  "confusion_matrix": [
+    [
+      559,
+      13,
+      11,
+      5
+    ],
+    [
+      0,
+      588,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      588,
+      0
+    ],
+    [
+      1,
+      0,
+      0,
+      587
+    ]
+  ]
+}

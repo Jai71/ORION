@@ -1,0 +1,49 @@
+{
+  "model": "forecast30",
+  "model_path": "models/forecast30_model.h5",
+  "accuracy": 0.9580164582810391,
+  "macro_f1": 0.32899257808111676,
+  "weighted_f1": 0.9761342335897039,
+  "pr_auc": {
+    "none": 0.9986930738659048,
+    "anaphylaxis": 0.0031220958278484123,
+    "malignant_hyperthermia": 0.0015372004565584046
+  },
+  "per_class": {
+    "none": {
+      "precision": 0.9976117631264706,
+      "recall": 0.9602472897425085,
+      "f1": 0.9785729880337259,
+      "support": 294068
+    },
+    "anaphylaxis": {
+      "precision": 0.004339686861810755,
+      "recall": 0.1328125,
+      "f1": 0.008404746209624258,
+      "support": 384
+    },
+    "malignant_hyperthermia": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 354
+    }
+  },
+  "confusion_matrix": [
+    [
+      282378,
+      11690,
+      0
+    ],
+    [
+      333,
+      51,
+      0
+    ],
+    [
+      343,
+      11,
+      0
+    ]
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "model": "forecast",
+  "model_path": "models/forecast_model.h5",
+  "accuracy": 0.9150701814447108,
+  "macro_f1": 0.24174024307075018,
+  "weighted_f1": 0.9491364386232405,
+  "pr_auc": {
+    "none": 0.9955302696598194,
+    "anaphylaxis": 0.002801112409760289,
+    "malignant_hyperthermia": 0.002688845992738495,
+    "respiratory_depression": 0.002764816922381176
+  },
+  "per_class": {
+    "none": {
+      "precision": 0.9929958718374596,
+      "recall": 0.9214097560302859,
+      "f1": 0.9558643901688774,
+      "support": 290036
+    },
+    "anaphylaxis": {
+      "precision": 0.002037791774731382,
+      "recall": 0.014322916666666666,
+      "f1": 0.0035679532922478106,
+      "support": 768
+    },
+    "malignant_hyperthermia": {
+      "precision": 0.0021808322527407755,
+      "recall": 0.052259887005649715,
+      "f1": 0.00418694126966165,
+      "support": 708
+    },
+    "respiratory_depression": {
+      "precision": 0.003284072249589491,
+      "recall": 0.003401360544217687,
+      "f1": 0.003341687552213868,
+      "support": 588
+    }
+  },
+  "confusion_matrix": [
+    [
+      267242,
+      5341,
+      16852,
+      601
+    ],
+    [
+      706,
+      11,
+      47,
+      4
+    ],
+    [
+      647,
+      22,
+      37,
+      2
+    ],
+    [
+      532,
+      24,
+      30,
+      2
+    ]
+  ]
+}

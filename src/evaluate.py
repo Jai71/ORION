@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""
+Evaluation pipeline for ORION models.
+
+Produces per-model:
+  - classification report (precision / recall / F1 per class)
+  - confusion matrix (PNG)
+  - PR curves per class (PNG)
+  - metrics JSON
+
+And a cross-model comparison bar chart + summary JSON.
+
+Usage:
+  python src/evaluate.py                       # evaluate all known models
+  python src/evaluate.py --models lstm_bi      # evaluate one model
+"""
+
+import argparse
+import json
+import os
+import sys
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    precision_recall_curve,
+)
+
+# ---- allow imports from project root -------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from predict import AttentionLayer, focal_loss, f1_m  # noqa: E402
+
+import tensorflow as tf  # noqa: E402
+
+# ---------- model registry ----------
+MODELS = {
+    "lstm_bi": {
+        "model_path": "models/final_lstm.h5",
+        "X_test": "data/processed/X_lstm_bi_split_test.npy",
+        "y_test": "data/processed/y_lstm_bi_split_test.npy",
+        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
+    },
+    "forecast": {
+        "model_path": "models/forecast_model.h5",
+        "X_test": "data/processed/X_forecast_split_test.npy",
+        "y_test": "data/processed/y_forecast_split_test.npy",
+        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
+    },
+    "forecast30": {
+        "model_path": "models/forecast30_model.h5",
+        "X_test": "data/processed/X_forecast30_split_test.npy",
+        "y_test": "data/processed/y_forecast30_split_test.npy",
+        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
+    },
+    "pretrain": {
+        "model_path": "models/pretrained_model.keras",
+        "X_test": "data/processed/X_pretrain_split_test.npy",
+        "y_test": "data/processed/y_pretrain_split_test.npy",
+        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
+    },
+}
+
+CUSTOM_OBJECTS = {
+    "AttentionLayer": AttentionLayer,
+    "focal_loss": focal_loss,
+    "f1_m": f1_m,
+}
+
+
+def load_model(path):
+    return tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+
+
+def evaluate_model(name, cfg, out_dir):
+    """Evaluate a single model. Returns metrics dict."""
+    print(f"\n{'='*60}")
+    print(f"  Evaluating: {name}")
+    print(f"{'='*60}")
+
+    if not os.path.isfile(cfg["model_path"]):
+        print(f"  SKIP — model not found: {cfg['model_path']}")
+        return None
+    if not os.path.isfile(cfg["X_test"]):
+        print(f"  SKIP — test data not found: {cfg['X_test']}")
+        return None
+
+    model = load_model(cfg["model_path"])
+    X_test = np.load(cfg["X_test"])
+    y_test = np.load(cfg["y_test"])
+    labels = cfg["labels"]
+    num_classes = len(labels)
+
+    probs = model.predict(X_test, batch_size=512, verbose=0)
+    y_pred = np.argmax(probs, axis=1)
+    y_true = np.argmax(y_test, axis=1) if y_test.ndim == 2 else y_test
+
+    acc = accuracy_score(y_true, y_pred)
+    report = classification_report(y_true, y_pred, target_names=labels, output_dict=True, zero_division=0)
+    cm = confusion_matrix(y_true, y_pred)
+
+    model_dir = os.path.join(out_dir, name)
+    os.makedirs(model_dir, exist_ok=True)
+
+    # ---- confusion matrix plot ----
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(cm, cmap="Blues")
+    ax.set_xticks(range(num_classes))
+    ax.set_yticks(range(num_classes))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticklabels(labels, fontsize=8)
+    for i in range(num_classes):
+        for j in range(num_classes):
+            ax.text(j, i, str(cm[i, j]), ha="center", va="center",
+                    color="white" if cm[i, j] > cm.max() / 2 else "black", fontsize=8)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_title(f"{name} — Confusion Matrix")
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.savefig(os.path.join(model_dir, "confusion_matrix.png"), dpi=150)
+    plt.close(fig)
+
+    # ---- precision-recall curves ----
+    fig, ax = plt.subplots(figsize=(7, 5))
+    y_true_onehot = y_test if y_test.ndim == 2 else np.eye(num_classes)[y_true]
+    pr_aucs = {}
+    for c in range(num_classes):
+        precision, recall, _ = precision_recall_curve(y_true_onehot[:, c], probs[:, c])
+        ap = average_precision_score(y_true_onehot[:, c], probs[:, c])
+        pr_aucs[labels[c]] = float(ap)
+        ax.plot(recall, precision, label=f"{labels[c]} (AP={ap:.3f})")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title(f"{name} — Precision-Recall Curves")
+    ax.legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(os.path.join(model_dir, "pr_curves.png"), dpi=150)
+    plt.close(fig)
+
+    # ---- metrics JSON ----
+    metrics = {
+        "model": name,
+        "model_path": cfg["model_path"],
+        "accuracy": float(acc),
+        "macro_f1": float(report["macro avg"]["f1-score"]),
+        "weighted_f1": float(report["weighted avg"]["f1-score"]),
+        "pr_auc": pr_aucs,
+        "per_class": {
+            lbl: {
+                "precision": float(report[lbl]["precision"]),
+                "recall": float(report[lbl]["recall"]),
+                "f1": float(report[lbl]["f1-score"]),
+                "support": int(report[lbl]["support"]),
+            }
+            for lbl in labels
+        },
+        "confusion_matrix": cm.tolist(),
+    }
+    with open(os.path.join(model_dir, "metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    print(f"  Accuracy:   {acc:.4f}")
+    print(f"  Macro F1:   {report['macro avg']['f1-score']:.4f}")
+    print(f"  Weighted F1:{report['weighted avg']['f1-score']:.4f}")
+    print(f"  PR-AUC:     {pr_aucs}")
+    print(f"  Saved to:   {model_dir}/")
+    return metrics
+
+
+def cross_model_comparison(all_metrics, out_dir):
+    """Bar chart + summary JSON comparing all models."""
+    if not all_metrics:
+        return
+    names = [m["model"] for m in all_metrics]
+    accs = [m["accuracy"] for m in all_metrics]
+    f1s = [m["macro_f1"] for m in all_metrics]
+
+    x = np.arange(len(names))
+    w = 0.35
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(x - w / 2, accs, w, label="Accuracy")
+    ax.bar(x + w / 2, f1s, w, label="Macro F1")
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=30, ha="right")
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Score")
+    ax.set_title("Cross-Model Comparison")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "comparison.png"), dpi=150)
+    plt.close(fig)
+
+    with open(os.path.join(out_dir, "summary.json"), "w") as f:
+        json.dump(all_metrics, f, indent=2)
+    print(f"\nComparison chart saved to {out_dir}/comparison.png")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate ORION models")
+    parser.add_argument("--models", nargs="*", default=None,
+                        help="Model names to evaluate (default: all)")
+    parser.add_argument("--out_dir", type=str, default="results")
+    args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    all_metrics = []
+    for name, cfg in MODELS.items():
+        if args.models and name not in args.models:
+            continue
+        m = evaluate_model(name, cfg, args.out_dir)
+        if m is not None:
+            all_metrics.append(m)
+
+    cross_model_comparison(all_metrics, args.out_dir)
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
