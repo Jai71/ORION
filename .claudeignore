@@ -1,0 +1,29 @@
+# Project System Files
+.git/
+.venv/
+__pycache__/
+.claude/
+.gemini/
+.agent/
+.gsd/
+
+# HEAVY ML DATA (From your screenshot)
+checkpoints/
+models/
+data/
+results/
+archive/
+logs/
+
+# File Extensions to Block
+*.pt
+*.pth
+*.onnx
+*.bin
+*.h5
+*.tflite
+*.safetensors
+*.ckpt
+*.pb
+*.csv
+*.parquet

@@ -1,6 +1,11 @@
 # Data files (too large for git)
 data/processed/*.npy
 data/raw/*.csv
+*.npy
+
+# Model weights
+*.h5
+*.keras
 
 # Python
 __pycache__/
@@ -20,3 +25,7 @@ __pycache__/
 models/
 checkpoints/
 logs/
+
+# Evaluation outputs (regenerable)
+results/*.png
+results/*/

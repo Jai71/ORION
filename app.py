@@ -26,42 +26,22 @@ import tensorflow.keras.backend as K
 
 # ---- project imports -------------------------------------------------------
 sys.path.insert(0, os.path.dirname(__file__))
-from predict import AttentionLayer, focal_loss, f1_m, default_labels  # noqa: E402
-
-CUSTOM_OBJECTS = {"AttentionLayer": AttentionLayer, "focal_loss": focal_loss, "f1_m": f1_m}
+from src.common import AttentionLayer, CUSTOM_OBJECTS  # noqa: E402
+from src.config import MODEL_REGISTRY as _REG, RESULTS_DIR, LOGS_DIR  # noqa: E402
+from predict import default_labels  # noqa: E402
 
 FEATURE_NAMES = ["Heart Rate", "Blood Pressure", "SpO2", "Respiratory Rate", "Temperature"]
 
-# ---- model / data registry -------------------------------------------------
+# ---- model / data registry (derived from src.config) -----------------------
 MODEL_REGISTRY = {
-    "lstm_bi (3-class)": {
-        "path": "models/final_lstm.h5",
-        "X": "data/processed/X_train.npy",
-        "y": "data/processed/y_train.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
-        "has_attention": False,
-    },
-    "forecast (4-class)": {
-        "path": "models/forecast_model.h5",
-        "X": "data/processed/X_pred_train.npy",
-        "y": "data/processed/y_pred_train.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
-        "has_attention": True,
-    },
-    "forecast30 (3-class)": {
-        "path": "models/forecast30_model.h5",
-        "X": "data/processed/X_pred30_train.npy",
-        "y": "data/processed/y_pred30_train.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
-        "has_attention": True,
-    },
-    "pretrained (4-class)": {
-        "path": "models/pretrained_model.keras",
-        "X": "data/processed/X_pretrain.npy",
-        "y": "data/processed/y_pretrain.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
-        "has_attention": True,
-    },
+    v["display_name"]: {
+        "path": v["model_path"],
+        "X": v["X_train"],
+        "y": v["y_train"],
+        "labels": v["labels"],
+        "has_attention": v["has_attention"],
+    }
+    for v in _REG.values()
 }
 
 
@@ -430,7 +410,7 @@ with tabs[5]:
     st.header("Training Results")
 
     # Check for evaluation results JSON
-    results_dir = "results"
+    results_dir = str(RESULTS_DIR)
     summary_path = os.path.join(results_dir, "summary.json")
     if os.path.isfile(summary_path):
         with open(summary_path) as f:
@@ -463,7 +443,7 @@ with tabs[5]:
 
     # TensorBoard logs
     st.subheader("TensorBoard Logs")
-    log_dirs = glob.glob("logs/*/train/events.out.tfevents.*")
+    log_dirs = glob.glob(os.path.join(str(LOGS_DIR), "*/train/events.out.tfevents.*"))
     if log_dirs:
         st.write(f"Found {len(log_dirs)} training log(s). Launch TensorBoard:")
         st.code("tensorboard --logdir logs/")

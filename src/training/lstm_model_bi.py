@@ -1,6 +1,7 @@
 import numpy as np
 import argparse
 import os
+import sys
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dropout, Dense, Bidirectional
@@ -12,28 +13,10 @@ from tensorflow.keras.callbacks import (
     TensorBoard
 )
 from tensorflow.keras import regularizers
-import tensorflow.keras.backend as K
-import tensorflow as tf
 
-def focal_loss(gamma=2.0, alpha=0.25):
-    """Focal Loss for multi-class classification."""
-    def loss(y_true, y_pred):
-        y_pred = tf.clip_by_value(y_pred, K.epsilon(), 1.0 - K.epsilon())
-        cross_entropy = -y_true * tf.math.log(y_pred)
-        weight = alpha * tf.math.pow(1 - y_pred, gamma)
-        return tf.reduce_sum(weight * cross_entropy, axis=-1)
-    return loss
-
-def f1_m(y_true, y_pred):
-    """Macro F1 score for multi-class predictions."""
-    y_pred_binary = K.round(y_pred)
-    tp = K.sum(K.cast(y_true * y_pred_binary, 'float'), axis=0)
-    fp = K.sum(K.cast((1 - y_true) * y_pred_binary, 'float'), axis=0)
-    fn = K.sum(K.cast(y_true * (1 - y_pred_binary), 'float'), axis=0)
-    precision = tp / (tp + fp + K.epsilon())
-    recall = tp / (tp + fn + K.epsilon())
-    f1 = 2 * precision * recall / (precision + recall + K.epsilon())
-    return K.mean(f1)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from src.common import focal_loss, f1_m  # noqa: E402
+from src.config import resolve  # noqa: E402
 
 def build_lstm_model(input_shape, num_classes=3, dropout_rate=0.4, l2_rate=1e-4):
     """
@@ -128,11 +111,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train the Bidirectional LSTM anomaly detection model')
-    parser.add_argument('--x_train',      type=str,   default='data/processed/X_train.npy',    help='Path to X_train file')
-    parser.add_argument('--y_train',      type=str,   default='data/processed/y_train.npy',    help='Path to y_train file')
-    parser.add_argument('--checkpoint',   type=str,   default='checkpoints/best_lstm.h5', help='Checkpoint path')
-    parser.add_argument('--output_model', type=str,   default='models/final_lstm.h5',   help='Final model path')
-    parser.add_argument('--log_dir',      type=str,   default='logs/fit',       help='TensorBoard log dir')
+    parser.add_argument('--x_train',      type=str,   default=resolve('data/processed/X_train.npy'),    help='Path to X_train file')
+    parser.add_argument('--y_train',      type=str,   default=resolve('data/processed/y_train.npy'),    help='Path to y_train file')
+    parser.add_argument('--checkpoint',   type=str,   default=resolve('checkpoints/best_lstm.h5'), help='Checkpoint path')
+    parser.add_argument('--output_model', type=str,   default=resolve('models/final_lstm.h5'),   help='Final model path')
+    parser.add_argument('--log_dir',      type=str,   default=resolve('logs/fit'),       help='TensorBoard log dir')
     parser.add_argument('--learning_rate',type=float, default=1e-4,            help='Initial learning rate')
     parser.add_argument('--clipnorm',     type=float, default=1.0,             help='Gradient clipping norm')
     parser.add_argument('--dropout_rate', type=float, default=0.4,             help='Dropout rate')

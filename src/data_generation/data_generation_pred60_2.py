@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset forecast --augment-features --hard-negatives --balance instead.
 def augment_features(window):
     """
     Extend each window (shape: WINDOW x FEATURES) with:

@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset pretrain instead.
 #!/usr/bin/env python3
 """
 generate_balanced_dataset.py

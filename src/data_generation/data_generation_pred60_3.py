@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset forecast --augment-features --jitter instead.
 import numpy as np
 import random
 def augment_features(window):

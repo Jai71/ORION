@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset lstm_bi --jitter instead.
 import numpy as np
 import pandas as pd
 import random

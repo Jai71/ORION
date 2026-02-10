@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --output-format csv instead.
 import numpy as np
 import pandas as pd
 import random

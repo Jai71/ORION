@@ -10,65 +10,15 @@ Examples:
 
 import argparse
 import os
+import sys
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import tensorflow as tf
-import tensorflow.keras.backend as K
 
-
-class AttentionLayer(tf.keras.layers.Layer):
-    """Custom attention layer used by forecast models in this repository."""
-
-    def build(self, input_shape):
-        self.W = self.add_weight(
-            name="attn_weight",
-            shape=(input_shape[-1], 1),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-        self.b = self.add_weight(
-            name="attn_bias",
-            shape=(input_shape[1], 1),
-            initializer="zeros",
-            trainable=True,
-        )
-        super().build(input_shape)
-
-    def call(self, x):
-        e = K.tanh(K.dot(x, self.W) + self.b)
-        e = K.squeeze(e, -1)
-        alpha = K.softmax(e)
-        alpha = K.expand_dims(alpha, -1)
-        context = x * alpha
-        return K.sum(context, axis=1)
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[2])
-
-
-def focal_loss(gamma: float = 2.0, alpha: float = 0.25):
-    """Compatibility focal loss for loading trained models."""
-
-    def loss(y_true, y_pred):
-        y_pred = tf.clip_by_value(y_pred, K.epsilon(), 1.0 - K.epsilon())
-        ce = -y_true * tf.math.log(y_pred)
-        weight = alpha * tf.math.pow(1 - y_pred, gamma)
-        return tf.reduce_sum(weight * ce, axis=-1)
-
-    return loss
-
-
-def f1_m(y_true, y_pred):
-    """Compatibility macro-F1 metric for loading trained models."""
-    y_pred_binary = K.round(y_pred)
-    tp = K.sum(K.cast(y_true * y_pred_binary, "float"), axis=0)
-    fp = K.sum(K.cast((1 - y_true) * y_pred_binary, "float"), axis=0)
-    fn = K.sum(K.cast(y_true * (1 - y_pred_binary), "float"), axis=0)
-    precision = tp / (tp + fp + K.epsilon())
-    recall = tp / (tp + fn + K.epsilon())
-    f1 = 2 * precision * recall / (precision + recall + K.epsilon())
-    return K.mean(f1)
+# ---- project imports -------------------------------------------------------
+sys.path.insert(0, os.path.dirname(__file__))
+from src.common import AttentionLayer, focal_loss, f1_m, CUSTOM_OBJECTS  # noqa: E402
 
 
 def parse_labels(label_arg: Optional[str]) -> Optional[List[str]]:
@@ -174,13 +124,8 @@ def main() -> None:
     if not os.path.isfile(args.input):
         raise FileNotFoundError(f"Input file not found: {args.input}")
 
-    custom_objects = {
-        "AttentionLayer": AttentionLayer,
-        "focal_loss": focal_loss,
-        "f1_m": f1_m,
-    }
     model = tf.keras.models.load_model(
-        args.model, custom_objects=custom_objects, compile=False
+        args.model, custom_objects=CUSTOM_OBJECTS, compile=False
     )
 
     # Memory-map large arrays so only selected slices are materialized in RAM.

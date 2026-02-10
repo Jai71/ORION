@@ -34,42 +34,20 @@ from sklearn.metrics import (
 
 # ---- allow imports from project root -------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from predict import AttentionLayer, focal_loss, f1_m  # noqa: E402
+from src.common import CUSTOM_OBJECTS  # noqa: E402
+from src.config import MODEL_REGISTRY as _REG, RESULTS_DIR  # noqa: E402
 
 import tensorflow as tf  # noqa: E402
 
-# ---------- model registry ----------
+# ---------- model registry (derived from src.config) ----------
 MODELS = {
-    "lstm_bi": {
-        "model_path": "models/final_lstm.h5",
-        "X_test": "data/processed/X_lstm_bi_split_test.npy",
-        "y_test": "data/processed/y_lstm_bi_split_test.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
-    },
-    "forecast": {
-        "model_path": "models/forecast_model.h5",
-        "X_test": "data/processed/X_forecast_split_test.npy",
-        "y_test": "data/processed/y_forecast_split_test.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
-    },
-    "forecast30": {
-        "model_path": "models/forecast30_model.h5",
-        "X_test": "data/processed/X_forecast30_split_test.npy",
-        "y_test": "data/processed/y_forecast30_split_test.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia"],
-    },
-    "pretrain": {
-        "model_path": "models/pretrained_model.keras",
-        "X_test": "data/processed/X_pretrain_split_test.npy",
-        "y_test": "data/processed/y_pretrain_split_test.npy",
-        "labels": ["none", "anaphylaxis", "malignant_hyperthermia", "respiratory_depression"],
-    },
-}
-
-CUSTOM_OBJECTS = {
-    "AttentionLayer": AttentionLayer,
-    "focal_loss": focal_loss,
-    "f1_m": f1_m,
+    name: {
+        "model_path": cfg["model_path"],
+        "X_test": cfg["X_test"],
+        "y_test": cfg["y_test"],
+        "labels": cfg["labels"],
+    }
+    for name, cfg in _REG.items()
 }
 
 
@@ -205,7 +183,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate ORION models")
     parser.add_argument("--models", nargs="*", default=None,
                         help="Model names to evaluate (default: all)")
-    parser.add_argument("--out_dir", type=str, default="results")
+    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)

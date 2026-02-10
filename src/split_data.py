@@ -3,33 +3,23 @@
 
 import argparse
 import os
+import sys
 
 import numpy as np
 from sklearn.model_selection import train_test_split
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from src.config import MODEL_REGISTRY, DATA_DIR  # noqa: E402
 
 SEED = 42
 
 DATASETS = [
     {
-        "name": "lstm_bi",
-        "X": "data/processed/X_train.npy",
-        "y": "data/processed/y_train.npy",
-    },
-    {
-        "name": "forecast",
-        "X": "data/processed/X_pred_train.npy",
-        "y": "data/processed/y_pred_train.npy",
-    },
-    {
-        "name": "forecast30",
-        "X": "data/processed/X_pred30_train.npy",
-        "y": "data/processed/y_pred30_train.npy",
-    },
-    {
-        "name": "pretrain",
-        "X": "data/processed/X_pretrain.npy",
-        "y": "data/processed/y_pretrain.npy",
-    },
+        "name": name,
+        "X": cfg["X_train"],
+        "y": cfg["y_train"],
+    }
+    for name, cfg in MODEL_REGISTRY.items()
 ]
 
 

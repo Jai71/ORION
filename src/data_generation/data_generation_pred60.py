@@ -1,3 +1,4 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset forecast instead.
 import numpy as np
 import pandas as pd
 import random

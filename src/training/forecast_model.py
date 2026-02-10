@@ -1,6 +1,7 @@
 import numpy as np
 import argparse
 import os
+import sys
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Bidirectional, LSTM, Dropout, Dense
@@ -12,58 +13,11 @@ from tensorflow.keras.callbacks import (
     TensorBoard
 )
 from tensorflow.keras import regularizers
-import tensorflow.keras.backend as K
 import tensorflow as tf
 
-class AttentionLayer(tf.keras.layers.Layer):
-    """
-    Custom attention layer: focuses on key time-steps in sequence.
-    """
-    def build(self, input_shape):
-        self.W = self.add_weight(
-            name='attn_weight',
-            shape=(input_shape[-1], 1),
-            initializer='glorot_uniform',
-            trainable=True
-        )
-        self.b = self.add_weight(
-            name='attn_bias',
-            shape=(input_shape[1], 1),
-            initializer='zeros',
-            trainable=True
-        )
-        super().build(input_shape)
-    def call(self, x):
-        e = K.tanh(K.dot(x, self.W) + self.b)  # (batch, time_steps, 1)
-        e = K.squeeze(e, -1)                  # (batch, time_steps)
-        alpha = K.softmax(e)                 # (batch, time_steps)
-        alpha = K.expand_dims(alpha, -1)     # (batch, time_steps, 1)
-        context = x * alpha                  # (batch, time_steps, features)
-        return K.sum(context, axis=1)       # (batch, features)
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[2])
-
-
-def focal_loss(gamma=2.0, alpha=0.25):
-    """Focal loss for multi-class forecasting tasks."""
-    def loss(y_true, y_pred):
-        y_pred = tf.clip_by_value(y_pred, K.epsilon(), 1.0 - K.epsilon())
-        ce = -y_true * tf.math.log(y_pred)
-        weight = alpha * tf.math.pow(1 - y_pred, gamma)
-        return tf.reduce_sum(weight * ce, axis=-1)
-    return loss
-
-
-def f1_m(y_true, y_pred):
-    """Macro F1 metric for multi-class predictions."""
-    y_pred_ = K.round(y_pred)
-    tp = K.sum(K.cast(y_true * y_pred_, 'float'), axis=0)
-    fp = K.sum(K.cast((1 - y_true) * y_pred_, 'float'), axis=0)
-    fn = K.sum(K.cast(y_true * (1 - y_pred_), 'float'), axis=0)
-    p = tp / (tp + fp + K.epsilon())
-    r = tp / (tp + fn + K.epsilon())
-    f1 = 2 * p * r / (p + r + K.epsilon())
-    return K.mean(f1)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from src.common import AttentionLayer, focal_loss, f1_m  # noqa: E402
+from src.config import resolve  # noqa: E402
 
 
 def build_forecast_model(input_shape, num_classes, dropout_rate=0.4, l2_rate=1e-4):
@@ -86,6 +40,50 @@ def build_forecast_model(input_shape, num_classes, dropout_rate=0.4, l2_rate=1e-
     out = Dense(num_classes, activation='softmax',
                 kernel_regularizer=l2_reg)(attn_out)
     return Model(inputs=inp, outputs=out)
+
+
+def _build_balanced_dataset(X_train, y_train, batch_size, augment_positives=False):
+    """Build a tf.data pipeline that interleaves positive and negative samples 1:1.
+
+    This addresses the severe class imbalance (400:1 none-to-anomaly ratio) that
+    causes the default training to ignore minority classes entirely.
+    See also: forecast_model_2_pretrain.py for the original balanced sampling approach.
+    """
+    labels_train = np.argmax(y_train, axis=1)
+    pos_mask = labels_train != 0
+    neg_mask = ~pos_mask
+    X_pos, y_pos = X_train[pos_mask], y_train[pos_mask]
+    X_neg, y_neg = X_train[neg_mask], y_train[neg_mask]
+
+    pos_ds = tf.data.Dataset.from_tensor_slices((X_pos, y_pos)).shuffle(len(X_pos), seed=42).repeat()
+    neg_ds = tf.data.Dataset.from_tensor_slices((X_neg, y_neg)).shuffle(len(X_neg), seed=42).repeat()
+
+    def interleave_fn(p, n):
+        return tf.data.Dataset.from_tensors(p).concatenate(tf.data.Dataset.from_tensors(n))
+
+    balanced_ds = tf.data.Dataset.zip((pos_ds, neg_ds)).flat_map(
+        lambda p, n: interleave_fn(p, n)
+    ).prefetch(tf.data.AUTOTUNE)
+
+    if augment_positives:
+        def augment(window, label):
+            label_index = tf.argmax(label, axis=-1)
+            def apply_aug(x):
+                shift = tf.random.uniform([], minval=-3, maxval=4, dtype=tf.int32)
+                def shift_right():
+                    return tf.concat([x[shift:], tf.repeat(x[-1:], shift, axis=0)], axis=0)
+                def shift_left():
+                    s = -shift
+                    return tf.concat([tf.repeat(x[:1], s, axis=0), x[:-s]], axis=0)
+                x_shifted = tf.cond(shift > 0, shift_right,
+                                    lambda: tf.cond(shift < 0, shift_left, lambda: x))
+                noise = tf.random.normal(shape=tf.shape(x_shifted), mean=0.0, stddev=0.02, dtype=x_shifted.dtype)
+                return x_shifted + noise
+            window_aug = tf.cond(tf.not_equal(label_index, 0), lambda: apply_aug(window), lambda: window)
+            return window_aug, label
+        balanced_ds = balanced_ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
+
+    return balanced_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE), len(X_train) // batch_size
 
 
 def main(args):
@@ -124,15 +122,32 @@ def main(args):
         TensorBoard(log_dir=args.log_dir, histogram_freq=1)
     ]
 
-    model.fit(
-        X, y,
-        batch_size=args.batch_size,
-        epochs=args.epochs,
-        validation_split=args.validation_split,
-        class_weight=cw,
-        callbacks=cbs,
-        verbose=1
-    )
+    if args.balanced_sampling:
+        # Balanced sampling: interleave pos/neg 1:1 to combat class imbalance
+        split_idx = int((1 - args.validation_split) * X.shape[0])
+        X_train, y_train = X[:split_idx], y[:split_idx]
+        X_val, y_val = X[split_idx:], y[split_idx:]
+        train_ds, steps = _build_balanced_dataset(
+            X_train, y_train, args.batch_size, augment_positives=args.augment_positives
+        )
+        model.fit(
+            train_ds,
+            epochs=args.epochs,
+            steps_per_epoch=steps,
+            validation_data=(X_val, y_val),
+            callbacks=cbs,
+            verbose=1
+        )
+    else:
+        model.fit(
+            X, y,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            validation_split=args.validation_split,
+            class_weight=cw,
+            callbacks=cbs,
+            verbose=1
+        )
 
     os.makedirs(os.path.dirname(args.output_model), exist_ok=True)
     model.save(args.output_model)
@@ -140,11 +155,11 @@ def main(args):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Train 4-class early-warning forecasting model')
-    p.add_argument('--x_train',      type=str,   default='data/processed/X_pred_train.npy')
-    p.add_argument('--y_train',      type=str,   default='data/processed/y_pred_train.npy')
-    p.add_argument('--checkpoint',   type=str,   default='checkpoints/forecast_best.h5')
-    p.add_argument('--output_model', type=str,   default='models/forecast_model.h5')
-    p.add_argument('--log_dir',      type=str,   default='logs/forecast')
+    p.add_argument('--x_train',      type=str,   default=resolve('data/processed/X_pred_train.npy'))
+    p.add_argument('--y_train',      type=str,   default=resolve('data/processed/y_pred_train.npy'))
+    p.add_argument('--checkpoint',   type=str,   default=resolve('checkpoints/forecast_best.h5'))
+    p.add_argument('--output_model', type=str,   default=resolve('models/forecast_model.h5'))
+    p.add_argument('--log_dir',      type=str,   default=resolve('logs/forecast'))
     p.add_argument('--learning_rate',type=float, default=1e-4)
     p.add_argument('--clipnorm',     type=float, default=1.0)
     p.add_argument('--dropout_rate', type=float, default=0.4)
@@ -154,5 +169,9 @@ if __name__ == '__main__':
     p.add_argument('--batch_size',   type=int,   default=32)
     p.add_argument('--epochs',       type=int,   default=50)
     p.add_argument('--validation_split', type=float, default=0.2)
+    p.add_argument('--balanced_sampling', action='store_true', default=False,
+                   help='Use 1:1 pos/neg interleaved sampling to combat class imbalance')
+    p.add_argument('--augment_positives', action='store_true', default=False,
+                   help='Apply jitter+noise augmentation on positive samples (requires --balanced_sampling)')
     args = p.parse_args()
     main(args)

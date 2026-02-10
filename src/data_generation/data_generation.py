@@ -1,8 +1,14 @@
+# DEPRECATED: Use src/data_generation/generate.py --preset lstm_bi instead.
 import numpy as np
+import os
+import sys
 import pandas as pd
 import random
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.utils import to_categorical
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from src.config import resolve  # noqa: E402
 
 # Set random seeds for reproducibility
 np.random.seed(42)
@@ -274,12 +280,16 @@ def main():
     y_lstm = to_categorical(y_lstm_int, num_classes=3)
 
     # Save numpy arrays ready for model training
-    np.save('data/processed/X_train.npy', X_lstm)
-    np.save('data/processed/y_train.npy', y_lstm)
-    np.save('data/processed/y_labels_full.npy', y_codes)
-    print(f"Saved data/processed/X_train.npy with shape {X_lstm.shape}")
-    print(f"Saved data/processed/y_train.npy with shape {y_lstm.shape}")
-    print(f"Saved data/processed/y_labels_full.npy with shape {y_codes.shape}")
+    x_path = resolve('data/processed/X_train.npy')
+    y_path = resolve('data/processed/y_train.npy')
+    labels_path = resolve('data/processed/y_labels_full.npy')
+    os.makedirs(os.path.dirname(x_path), exist_ok=True)
+    np.save(x_path, X_lstm)
+    np.save(y_path, y_lstm)
+    np.save(labels_path, y_codes)
+    print(f"Saved {x_path} with shape {X_lstm.shape}")
+    print(f"Saved {y_path} with shape {y_lstm.shape}")
+    print(f"Saved {labels_path} with shape {y_codes.shape}")
 
 if __name__ == "__main__":
     main()
