@@ -2,6 +2,7 @@ import numpy as np
 import argparse
 import os
 import sys
+from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, LSTM, Dropout, Dense, Bidirectional
@@ -14,6 +15,7 @@ from tensorflow.keras.callbacks import (
 )
 from tensorflow.keras import regularizers
 import tensorflow as tf
+import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.common import AttentionLayer, focal_loss, f1_m  # noqa: E402
@@ -87,6 +89,11 @@ def _build_balanced_dataset(X_train, y_train, batch_size, augment_positives=Fals
 
 
 def main(args):
+    # Reproducibility
+    np.random.seed(42)
+    random.seed(42)
+    tf.random.set_seed(42)
+
     print("🚀 Starting Bi-LSTM+Attention 30s forecast training…")
     X = np.load(args.x_train)  # shape: (N, WINDOW, FEATURES)
     y = np.load(args.y_train)  # shape: (N, num_classes)
@@ -102,6 +109,9 @@ def main(args):
     cw = dict(zip(classes, weights))
     print(f"Using class weights: {cw}")
 
+    alpha = args.focal_alpha if args.focal_alpha is not None else weights / weights.sum()
+    print(f"Focal loss alpha: {alpha}")
+
     # Build model
     input_shape = X.shape[1:]
     num_classes = y.shape[1]
@@ -112,23 +122,25 @@ def main(args):
     )
     optimizer = Adam(learning_rate=args.learning_rate, clipnorm=args.clipnorm)
     model.compile(
-        loss=focal_loss(gamma=args.focal_gamma, alpha=args.focal_alpha),
+        loss=focal_loss(gamma=args.focal_gamma, alpha=alpha),
         optimizer=optimizer,
         metrics=['accuracy', f1_m]
     )
 
     # Callbacks
     callbacks = [
-        EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True, verbose=1),
+        EarlyStopping(monitor='val_loss', patience=6, restore_best_weights=True, verbose=1),
         ModelCheckpoint(args.checkpoint, monitor='val_loss', save_best_only=True, verbose=1),
         ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2, min_lr=1e-6, verbose=1),
         TensorBoard(log_dir=args.log_dir, histogram_freq=1)
     ]
 
     if args.balanced_sampling:
-        split_idx = int((1 - args.validation_split) * X.shape[0])
-        X_train, y_train = X[:split_idx], y[:split_idx]
-        X_val, y_val = X[split_idx:], y[split_idx:]
+        # Stratified shuffle split for balanced validation
+        y_labels_split = np.argmax(y, axis=1)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=args.validation_split, stratify=y_labels_split, random_state=42
+        )
         train_ds, steps = _build_balanced_dataset(
             X_train, y_train, args.batch_size, augment_positives=args.augment_positives
         )
@@ -168,12 +180,13 @@ if __name__ == '__main__':
     parser.add_argument('--dropout_rate', type=float, default=0.4)
     parser.add_argument('--l2_rate', type=float, default=1e-4)
     parser.add_argument('--focal_gamma', type=float, default=2.0)
-    parser.add_argument('--focal_alpha', type=float, default=0.25)
+    parser.add_argument('--focal_alpha', type=float, default=None,
+                        help='Uniform focal loss alpha (overrides per-class computation from class frequencies)')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--validation_split', type=float, default=0.2)
-    parser.add_argument('--balanced_sampling', action='store_true', default=False,
-                        help='Use 1:1 pos/neg interleaved sampling to combat class imbalance')
+    parser.add_argument('--balanced_sampling', action=argparse.BooleanOptionalAction, default=True,
+                        help='Use 1:1 pos/neg interleaved sampling to combat class imbalance (default: on)')
     parser.add_argument('--augment_positives', action='store_true', default=False,
                         help='Apply jitter+noise augmentation on positive samples (requires --balanced_sampling)')
     args = parser.parse_args()

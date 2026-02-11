@@ -3,7 +3,9 @@
 import numpy as np
 import tensorflow as tf
 
-from src.common import AttentionLayer, focal_loss, f1_m, CUSTOM_OBJECTS
+import pytest
+
+from src.common import AttentionLayer, focal_loss, f1_m, CUSTOM_OBJECTS, validate_array
 
 
 def test_attention_layer_output_shape():
@@ -48,6 +50,19 @@ def test_f1_m_perfect_predictions():
     assert result > 0.9
 
 
+def test_f1_m_softmax_correct_argmax():
+    """f1_m with argmax should handle typical softmax outputs correctly.
+
+    With the old K.round approach, [0.4, 0.35, 0.25] would round to all zeros.
+    With argmax, class 0 is correctly selected.
+    """
+    y_true = tf.constant([[1, 0, 0], [0, 1, 0]], dtype=tf.float32)
+    y_pred = tf.constant([[0.4, 0.35, 0.25], [0.2, 0.5, 0.3]], dtype=tf.float32)
+    result = f1_m(y_true, y_pred).numpy()
+    # Both predictions have correct argmax, so F1 should be high
+    assert result > 0.5
+
+
 def test_custom_objects_dict():
     """CUSTOM_OBJECTS should contain all three custom objects."""
     assert "AttentionLayer" in CUSTOM_OBJECTS
@@ -56,3 +71,23 @@ def test_custom_objects_dict():
     assert CUSTOM_OBJECTS["AttentionLayer"] is AttentionLayer
     assert CUSTOM_OBJECTS["focal_loss"] is focal_loss
     assert CUSTOM_OBJECTS["f1_m"] is f1_m
+
+
+def test_validate_array_passes_clean():
+    """validate_array should not raise on a clean array."""
+    arr = np.array([[1.0, 2.0], [3.0, 4.0]])
+    validate_array(arr, "clean")  # should not raise
+
+
+def test_validate_array_raises_on_nan():
+    """validate_array should raise ValueError when array contains NaN."""
+    arr = np.array([1.0, np.nan, 3.0])
+    with pytest.raises(ValueError, match="NaN"):
+        validate_array(arr, "test")
+
+
+def test_validate_array_raises_on_inf():
+    """validate_array should raise ValueError when array contains Inf."""
+    arr = np.array([1.0, np.inf, 3.0])
+    with pytest.raises(ValueError, match="Inf"):
+        validate_array(arr, "test")

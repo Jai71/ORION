@@ -41,12 +41,14 @@ def test_build_windows_no_horizon():
     anomaly_types = ["anaphylaxis"]
     onsets = [25]
 
-    X, y = build_windows(data_list, anomaly_types, onsets, horizon=0)
+    X, y, groups = build_windows(data_list, anomaly_types, onsets, horizon=0)
     expected_windows = 50 - WINDOW + 1
     assert X.shape == (expected_windows, WINDOW, FEATURES)
     assert y.shape == (expected_windows,)
     # All windows labeled as anaphylaxis (code=1)
     assert all(y == 1)
+    # All windows belong to patient 0
+    assert all(groups == 0)
 
 
 def test_build_windows_with_horizon():
@@ -59,10 +61,12 @@ def test_build_windows_with_horizon():
     onsets = [100]
     horizon = 30
 
-    X, y = build_windows(data_list, anomaly_types, onsets, horizon=horizon)
+    X, y, groups = build_windows(data_list, anomaly_types, onsets, horizon=horizon)
     # Some windows should be labeled 0 (before onset) and some 1 (near onset)
     assert 0 in y
     assert 1 in y
+    # All windows belong to patient 0
+    assert all(groups == 0)
 
 
 def test_augment_features_shape():

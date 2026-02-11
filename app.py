@@ -18,6 +18,7 @@ import random
 import sys
 import time
 
+import joblib
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -26,8 +27,9 @@ import tensorflow.keras.backend as K
 
 # ---- project imports -------------------------------------------------------
 sys.path.insert(0, os.path.dirname(__file__))
-from src.common import AttentionLayer, CUSTOM_OBJECTS  # noqa: E402
+from src.common import AttentionLayer, CUSTOM_OBJECTS, validate_array  # noqa: E402
 from src.config import MODEL_REGISTRY as _REG, RESULTS_DIR, LOGS_DIR  # noqa: E402
+from src.data_generation.generate import augment_features  # noqa: E402
 from predict import default_labels  # noqa: E402
 
 FEATURE_NAMES = ["Heart Rate", "Blood Pressure", "SpO2", "Respiratory Rate", "Temperature"]
@@ -40,6 +42,7 @@ MODEL_REGISTRY = {
         "y": v["y_train"],
         "labels": v["labels"],
         "has_attention": v["has_attention"],
+        "scaler_path": v["scaler_path"],
     }
     for v in _REG.values()
 }
@@ -56,6 +59,14 @@ def load_npy(path):
     return np.load(path, mmap_mode="r")
 
 
+@st.cache_resource
+def load_scaler(path):
+    """Load a saved StandardScaler, or return None if the file doesn't exist."""
+    if path and os.path.isfile(path):
+        return joblib.load(path)
+    return None
+
+
 def available_models():
     return {k: v for k, v in MODEL_REGISTRY.items() if os.path.isfile(v["path"])}
 
@@ -63,7 +74,15 @@ def available_models():
 def predict_probs(model, window):
     """Run a single window (T, F) through model and return probability array."""
     batch = np.expand_dims(window, 0)
-    return model.predict(batch, verbose=0)[0]
+    try:
+        validate_array(batch, "Model input")
+        probs = model.predict(batch, verbose=0)[0]
+        validate_array(probs, "Model output")
+        return probs
+    except ValueError as e:
+        st.warning(f"Validation error: {e}")
+        n_classes = model.output_shape[-1]
+        return np.full(n_classes, 1.0 / n_classes)
 
 
 def get_attention_weights(model, window):
@@ -291,9 +310,13 @@ with tabs[3]:
     if start_sim:
         scfg = models[sim_model_name]
         sim_model = load_model_cached(scfg["path"])
+        sim_scaler = load_scaler(scfg["scaler_path"])
         labels = scfg["labels"]
         n_features = sim_model.input_shape[-1]
         window_len = sim_model.input_shape[-2]  # typically 20
+
+        if sim_scaler is None:
+            col2.warning("Scaler not found — run data generation first for accurate predictions.")
 
         baseline = [
             random.uniform(65, 85),   # HR
@@ -309,18 +332,26 @@ with tabs[3]:
         chart_placeholder = col2.empty()
         pred_placeholder = col2.empty()
 
-        history = []
+        raw_history = []  # always store raw 5-feature vitals
         for t in range(sim_duration):
             vitals = generate_live_vitals(t, baseline, anom, onset)
-            # If model expects 20 features (augmented), pad with zeros for demo
-            if n_features == 20:
-                row = vitals + [0.0] * 15
-            else:
-                row = vitals
-            history.append(row)
+            raw_history.append(vitals)
 
-            if len(history) >= window_len:
-                window = np.array(history[-window_len:], dtype=np.float32)
+            if len(raw_history) >= window_len:
+                raw_window = np.array(raw_history[-window_len:], dtype=np.float32)
+                # Build the window with the right feature count
+                if n_features == 20:
+                    window = augment_features(raw_window)
+                else:
+                    window = raw_window
+                # Apply scaler if available
+                if sim_scaler is not None:
+                    window = sim_scaler.transform(window.reshape(-1, n_features)).reshape(window.shape)
+                try:
+                    validate_array(window, "Simulator input")
+                except ValueError as e:
+                    pred_placeholder.warning(f"t={t}s — skipped: {e}")
+                    continue
                 probs = predict_probs(sim_model, window)
                 pred = int(np.argmax(probs))
                 color = "🟢" if pred == 0 else "🔴"
@@ -328,8 +359,8 @@ with tabs[3]:
                     f"**t={t}s** — {color} **{labels[pred]}** ({probs[pred]:.1%})"
                 )
 
-            # Plot last 60 seconds of vitals
-            plot_history = history[-60:]
+            # Plot last 60 seconds of vitals (always raw 5 features)
+            plot_history = raw_history[-60:]
             fig = go.Figure()
             for f_idx, fname in enumerate(FEATURE_NAMES):
                 fig.add_trace(go.Scatter(

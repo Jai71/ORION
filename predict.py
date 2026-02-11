@@ -13,12 +13,13 @@ import os
 import sys
 from typing import List, Optional, Sequence, Tuple
 
+import joblib
 import numpy as np
 import tensorflow as tf
 
 # ---- project imports -------------------------------------------------------
 sys.path.insert(0, os.path.dirname(__file__))
-from src.common import AttentionLayer, focal_loss, f1_m, CUSTOM_OBJECTS  # noqa: E402
+from src.common import AttentionLayer, focal_loss, f1_m, CUSTOM_OBJECTS, validate_array  # noqa: E402
 
 
 def parse_labels(label_arg: Optional[str]) -> Optional[List[str]]:
@@ -113,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated labels or text file path (one label per line)",
     )
+    parser.add_argument(
+        "--scaler",
+        type=str,
+        default=None,
+        help="Path to a saved StandardScaler (.joblib) to apply before inference",
+    )
     return parser
 
 
@@ -132,7 +139,17 @@ def main() -> None:
     arr = np.load(args.input, mmap_mode="r")
     batch, indices = select_batch(arr, args.sample_index, args.batch_size)
 
+    # Optional: scale raw input using a saved StandardScaler
+    if args.scaler:
+        if not os.path.isfile(args.scaler):
+            raise FileNotFoundError(f"Scaler not found: {args.scaler}")
+        scaler = joblib.load(args.scaler)
+        orig_shape = batch.shape
+        batch = scaler.transform(batch.reshape(-1, orig_shape[-1])).reshape(orig_shape)
+        validate_array(batch, "Scaled input")
+
     probs = model.predict(batch, verbose=0)
+    validate_array(probs, "Model output")
     if probs.ndim != 2:
         raise ValueError(f"Unexpected model output shape: {probs.shape}")
 

@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""Deterministic stratified 80/20 train/test split for all ORION datasets."""
+"""Deterministic 80/20 train/test split for all ORION datasets.
+
+When patient group IDs are available (groups_*.npy produced by generate.py),
+the split is performed at the patient level using GroupShuffleSplit so that
+all windows from one patient land in the same fold.  This prevents data
+leakage from overlapping windows.
+
+Falls back to window-level stratified splitting for legacy data without
+a groups file.
+"""
 
 import argparse
 import os
 import sys
 
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.config import MODEL_REGISTRY, DATA_DIR  # noqa: E402
@@ -32,9 +41,25 @@ def split_and_save(name, x_path, y_path, test_size=0.2):
     # Stratify on integer class labels
     y_int = np.argmax(y, axis=1) if y.ndim == 2 else y
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=SEED, stratify=y_int
-    )
+    # Derive groups filename: X_<prefix>train.npy -> groups_<prefix>train.npy
+    groups_filename = os.path.basename(x_path).replace("X_", "groups_", 1)
+    groups_path = os.path.join(os.path.dirname(x_path), groups_filename)
+
+    if os.path.isfile(groups_path):
+        groups = np.load(groups_path)
+        gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=SEED)
+        train_idx, test_idx = next(gss.split(X, y_int, groups))
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        n_train_patients = len(np.unique(groups[train_idx]))
+        n_test_patients = len(np.unique(groups[test_idx]))
+        print(f"  Patient-level split: {n_train_patients} train / {n_test_patients} test patients")
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=SEED, stratify=y_int
+        )
+        print("  Window-level split (no groups file found)")
+
     print(f"  Train: {X_train.shape}  Test: {X_test.shape}")
 
     out_dir = os.path.dirname(x_path)
@@ -50,7 +75,7 @@ def split_and_save(name, x_path, y_path, test_size=0.2):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Split ORION datasets 80/20 stratified")
+    parser = argparse.ArgumentParser(description="Split ORION datasets 80/20 (patient-level when available)")
     parser.add_argument("--test_size", type=float, default=0.2)
     parser.add_argument("--datasets", nargs="*", default=None,
                         help="Names to split (default: all). Options: lstm_bi forecast forecast30 pretrain")

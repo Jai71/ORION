@@ -132,9 +132,8 @@ All models consume windowed input of shape `(N, 20, F)` where `F` is 5 (raw vita
 | `python src/data_generation/generate.py --preset forecast30` | Generate 3-class 30s-horizon data |
 | `python src/data_generation/generate.py --preset pretrain` | Generate balanced 4-class data |
 | `python src/training/lstm_model_bi.py` | Train baseline Bi-LSTM (3-class) |
-| `python src/training/forecast_model.py` | Train forecast model (4-class) |
-| `python src/training/forecast_model.py --balanced_sampling` | Train with balanced sampling |
-| `python src/training/forecast30_model.py` | Train forecast30 model (3-class) |
+| `python src/training/forecast_model.py` | Train forecast model (4-class, balanced sampling on by default) |
+| `python src/training/forecast30_model.py` | Train forecast30 model (3-class, balanced sampling on by default) |
 | `python src/training/forecast_model_2_pretrain.py [--pretrain]` | Train pretrain model |
 | `python src/evaluate.py [--models lstm_bi forecast ...]` | Run evaluation pipeline |
 | `python src/split_data.py` | Stratified 80/20 train/test split |
@@ -156,14 +155,14 @@ All models consume windowed input of shape `(N, 20, F)` where `F` is 5 (raw vita
 - **Classes**: 4 (adds respiratory_depression)
 - **Input shape**: (20, 5) or (20, 20) with augmented features
 - **Output**: `models/forecast_model.h5`
-- **New flags**: `--balanced_sampling`, `--augment_positives`
+- **Defaults**: `--balanced_sampling` on (use `--no-balanced_sampling` to disable), `--augment_positives` opt-in
 
 ### 3. forecast30 — `src/training/forecast30_model.py`
 - **Architecture**: Same as forecast (Bi-LSTM+Attention)
 - **Classes**: 3 (none, anaphylaxis, malignant_hyperthermia)
 - **Input shape**: (20, 5)
 - **Output**: `models/forecast30_model.h5`
-- **New flags**: `--balanced_sampling`, `--augment_positives`
+- **Defaults**: `--balanced_sampling` on (use `--no-balanced_sampling` to disable), `--augment_positives` opt-in
 
 ### 4. pretrain — `src/training/forecast_model_2_pretrain.py`
 - **Architecture**: Same Bi-LSTM+Attention as forecast
@@ -186,7 +185,7 @@ All models use a custom `AttentionLayer` (tanh scoring → softmax → weighted 
 | Dropout rate | 0.4 | `--dropout_rate` |
 | L2 regularization | 1e-4 | `--l2_rate` |
 | Focal loss gamma | 2.0 | `--focal_gamma` |
-| Focal loss alpha | 0.25 | `--focal_alpha` |
+| Focal loss alpha | per-class (from class frequencies) | `--focal_alpha` (scalar override) |
 | Batch size | 32 | `--batch_size` |
 | Max epochs | 50 | `--epochs` |
 | Validation split | 0.2 | `--validation_split` |
@@ -235,7 +234,7 @@ The forecast and forecast30 models achieve high accuracy by overwhelmingly predi
 
 4. **~~Hardcoded paths~~** — RESOLVED. All paths now resolved via `src/config.py` (`PROJECT_ROOT`, `resolve()`, `MODEL_REGISTRY`). Scripts work from any working directory.
 
-5. **~~Low macro-F1 on forecast/forecast30~~** — MITIGATED. `--balanced_sampling` and `--augment_positives` flags added to both `forecast_model.py` and `forecast30_model.py`. Retraining with these flags should match pretrain's ~0.99 macro F1.
+5. **~~Low macro-F1 on forecast/forecast30~~** — RESOLVED. `--balanced_sampling` is now the default for both `forecast_model.py` and `forecast30_model.py`. Use `--no-balanced_sampling` to opt out. `--augment_positives` remains opt-in.
 
 6. **Large repo size** — See Repo Size Reduction Plan below.
 
@@ -293,10 +292,10 @@ python src/data_generation/generate.py --preset pretrain      # balanced 4-class
 
 # Train models
 python src/training/lstm_model_bi.py
-python src/training/forecast_model.py
-python src/training/forecast_model.py --balanced_sampling --augment_positives  # with class balance fix
-python src/training/forecast30_model.py
-python src/training/forecast30_model.py --balanced_sampling --augment_positives
+python src/training/forecast_model.py                                         # balanced sampling on by default
+python src/training/forecast_model.py --augment_positives                     # with additional augmentation
+python src/training/forecast30_model.py                                       # balanced sampling on by default
+python src/training/forecast30_model.py --augment_positives                   # with additional augmentation
 python src/training/forecast_model_2_pretrain.py --pretrain   # pretrain phase
 python src/training/forecast_model_2_pretrain.py              # fine-tune phase
 

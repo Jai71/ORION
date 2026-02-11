@@ -44,6 +44,11 @@ def build_forecast_model(input_shape, num_classes, dropout_rate=0.4, l2_rate=1e-
 
 
 def main(args):
+    # Reproducibility
+    np.random.seed(42)
+    random.seed(42)
+    tf.random.set_seed(42)
+
     print("🚀 Starting Bi-LSTM+Attention for 4-class forecasting…")
     X = np.load(args.x_train)          # (N, WINDOW, FEATURES)
     y = np.load(args.y_train)          # (N, num_classes=4)
@@ -143,7 +148,7 @@ def main(args):
     X_pos_full, y_pos_full = X_pos, y_pos
 
     cbs = [
-        EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True, verbose=1),
+        EarlyStopping(monitor='val_loss', patience=6, restore_best_weights=True, verbose=1),
         ModelCheckpoint(args.checkpoint, monitor='val_loss', save_best_only=True, verbose=1),
         ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2, min_lr=1e-6, verbose=1),
         TensorBoard(log_dir=args.log_dir, histogram_freq=1)

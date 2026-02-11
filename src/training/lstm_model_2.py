@@ -14,6 +14,7 @@ from tensorflow.keras.callbacks import (
 )
 from tensorflow.keras import regularizers
 import tensorflow as tf
+import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.common import focal_loss, f1_m  # noqa: E402
@@ -58,6 +59,11 @@ def build_lstm_model(input_shape, num_classes=3, dropout_rate=0.4, l2_rate=1e-4)
 
 
 def main(args):
+    # Reproducibility
+    np.random.seed(42)
+    random.seed(42)
+    tf.random.set_seed(42)
+
     print("🚀 Starting LSTM training…")
 
     # Load training data
@@ -91,7 +97,7 @@ def main(args):
     callbacks = [
         EarlyStopping(
             monitor='val_loss',
-            patience=3,
+            patience=6,
             restore_best_weights=True,
             verbose=1
         ),

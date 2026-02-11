@@ -18,6 +18,7 @@ import os
 import sys
 import random
 
+import joblib
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.utils import to_categorical
@@ -97,9 +98,17 @@ PRESETS = {
 # ---------------------------------------------------------------------------
 def augment_features(window):
     """Extend (WINDOW, 5) -> (WINDOW, 20) with deltas, rolling mean, rolling std."""
-    deltas = np.vstack([np.zeros((1, window.shape[1])), np.diff(window, axis=0)])
-    means = np.array([window[max(0, i - 4) : i + 1].mean(axis=0) for i in range(window.shape[0])])
-    stds = np.array([window[max(0, i - 4) : i + 1].std(axis=0) for i in range(window.shape[0])])
+    T, F = window.shape
+    deltas = np.vstack([np.zeros((1, F)), np.diff(window, axis=0)])
+
+    # Vectorized rolling mean/std with window size 5, handling edges via padding
+    pad = np.repeat(window[:1], 4, axis=0)  # repeat first row 4 times
+    padded = np.concatenate([pad, window], axis=0)  # shape (T+4, F)
+    # sliding_window_view gives shape (T, 5, F)
+    windows = np.lib.stride_tricks.sliding_window_view(padded, window_shape=5, axis=0)
+    means = windows.mean(axis=2)
+    stds = windows.std(axis=2)
+
     return np.concatenate([window, deltas, means, stds], axis=1)
 
 
@@ -290,9 +299,13 @@ def generate_dataset(num_patients=NUM_PATIENTS, timesteps=TIMESTEPS,
 # Windowing
 # ---------------------------------------------------------------------------
 def build_windows(data_list, anomaly_types, onsets, horizon=0):
-    """Create sliding windows with optional prediction-horizon labeling."""
-    X_windows, y_codes = [], []
-    for series, atype, onset in zip(data_list, anomaly_types, onsets):
+    """Create sliding windows with optional prediction-horizon labeling.
+
+    Returns (X, y_codes, groups) where groups[i] is the patient index that
+    produced window i.  This enables patient-level train/test splitting.
+    """
+    X_windows, y_codes, groups = [], [], []
+    for pid, (series, atype, onset) in enumerate(zip(data_list, anomaly_types, onsets)):
         n = len(series)
         if horizon > 0:
             # Prediction-horizon labeling
@@ -304,21 +317,27 @@ def build_windows(data_list, anomaly_types, onsets, horizon=0):
                     code = TYPE_TO_CODE["none"]
                 X_windows.append(window)
                 y_codes.append(code)
+                groups.append(pid)
         else:
             # Per-patient labeling (all windows from one patient share its label)
             code = TYPE_TO_CODE[atype]
             for start in range(0, n - WINDOW + 1):
                 X_windows.append(series[start : start + WINDOW])
                 y_codes.append(code)
-    return np.stack(X_windows), np.array(y_codes)
+                groups.append(pid)
+    return np.stack(X_windows), np.array(y_codes), np.array(groups)
 
 
 # ---------------------------------------------------------------------------
 # Jitter augmentation
 # ---------------------------------------------------------------------------
-def jitter_windows(X, y, k=3, max_shift=5):
-    """Create k jittered copies of anomaly windows (shift +-max_shift timesteps)."""
-    aug_X, aug_y = [], []
+def jitter_windows(X, y, k=3, max_shift=5, groups=None):
+    """Create k jittered copies of anomaly windows (shift +-max_shift timesteps).
+
+    If *groups* is provided, augmented copies inherit the source patient ID
+    and the updated groups array is returned as a third element.
+    """
+    aug_X, aug_y, aug_g = [], [], []
     for i in range(len(X)):
         if y[i] == 0:
             continue
@@ -333,19 +352,28 @@ def jitter_windows(X, y, k=3, max_shift=5):
                 w = X[i].copy()
             aug_X.append(w)
             aug_y.append(y[i])
+            if groups is not None:
+                aug_g.append(groups[i])
     if aug_X:
-        return (
-            np.concatenate([X, np.stack(aug_X)]),
-            np.concatenate([y, np.array(aug_y)]),
-        )
+        X_out = np.concatenate([X, np.stack(aug_X)])
+        y_out = np.concatenate([y, np.array(aug_y)])
+        if groups is not None:
+            return X_out, y_out, np.concatenate([groups, np.array(aug_g)])
+        return X_out, y_out
+    if groups is not None:
+        return X, y, groups
     return X, y
 
 
 # ---------------------------------------------------------------------------
 # Balancing
 # ---------------------------------------------------------------------------
-def balance_classes(X, y, num_classes):
-    """Downsample majority classes so negative count <= 2x positive count."""
+def balance_classes(X, y, num_classes, groups=None):
+    """Downsample majority classes so negative count <= 2x positive count.
+
+    If *groups* is provided, the same index selection is applied and the
+    updated groups array is returned as a third element.
+    """
     labels = y if y.ndim == 1 else np.argmax(y, axis=1)
     pos_mask = labels != 0
     neg_mask = ~pos_mask
@@ -356,6 +384,8 @@ def balance_classes(X, y, num_classes):
     np.random.shuffle(neg_indices)
     keep_neg = neg_indices[:target_neg]
     keep = np.sort(np.concatenate([np.where(pos_mask)[0], keep_neg]))
+    if groups is not None:
+        return X[keep], y[keep], groups[keep]
     return X[keep], y[keep]
 
 
@@ -376,13 +406,13 @@ def run(args):
     )
     print(f"Generated {len(data_list)} patients x {TIMESTEPS} timesteps.")
 
-    # 2. Build windows
-    X_array, y_codes = build_windows(data_list, anomaly_types, onsets, horizon=args.horizon)
+    # 2. Build windows (groups tracks source patient ID per window)
+    X_array, y_codes, groups = build_windows(data_list, anomaly_types, onsets, horizon=args.horizon)
     print(f"Windows: {X_array.shape}, labels: {y_codes.shape}")
 
     # 3. Optional jitter augmentation
     if args.jitter:
-        X_array, y_codes = jitter_windows(X_array, y_codes)
+        X_array, y_codes, groups = jitter_windows(X_array, y_codes, groups=groups)
         print(f"After jitter: {X_array.shape}")
 
     # 4. Optional feature augmentation
@@ -396,16 +426,24 @@ def run(args):
     scaler = StandardScaler().fit(flat)
     X_scaled = scaler.transform(flat).reshape(X_array.shape)
 
+    # 5b. Save scaler for inference-time use
+    scaler_dir = resolve("data/processed")
+    os.makedirs(scaler_dir, exist_ok=True)
+    scaler_path = os.path.join(scaler_dir, f"scaler_{args.output_prefix}train.joblib")
+    joblib.dump(scaler, scaler_path)
+    print(f"Saved {scaler_path}")
+
     # 6. Filter classes if num_classes == 3 (drop respiratory_depression)
     if args.num_classes == 3:
         mask = y_codes != TYPE_TO_CODE["respiratory_depression"]
         X_scaled = X_scaled[mask]
         y_codes = y_codes[mask]
+        groups = groups[mask]
         print(f"After filtering to 3 classes: {X_scaled.shape}")
 
     # 7. Optional balancing
     if args.balance:
-        X_scaled, y_codes = balance_classes(X_scaled, y_codes, args.num_classes)
+        X_scaled, y_codes, groups = balance_classes(X_scaled, y_codes, args.num_classes, groups=groups)
         print(f"After balancing: {X_scaled.shape}")
 
     # 8. One-hot encode
@@ -420,12 +458,15 @@ def run(args):
         x_path = os.path.join(out_dir, f"X_{prefix}train.npy")
         y_path = os.path.join(out_dir, f"y_{prefix}train.npy")
         labels_path = os.path.join(out_dir, f"y_{prefix}labels_full.npy")
+        groups_path = os.path.join(out_dir, f"groups_{prefix}train.npy")
         np.save(x_path, X_scaled)
         np.save(y_path, y_onehot)
         np.save(labels_path, y_codes)
+        np.save(groups_path, groups)
         print(f"Saved {x_path} {X_scaled.shape}")
         print(f"Saved {y_path} {y_onehot.shape}")
         print(f"Saved {labels_path} {y_codes.shape}")
+        print(f"Saved {groups_path} {groups.shape} (patient IDs for group splitting)")
     elif args.output_format == "csv":
         import pandas as pd
         # Flatten to per-timestep CSV (no windowing applied for CSV)

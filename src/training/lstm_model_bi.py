@@ -13,6 +13,8 @@ from tensorflow.keras.callbacks import (
     TensorBoard
 )
 from tensorflow.keras import regularizers
+import tensorflow as tf
+import random
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.common import focal_loss, f1_m  # noqa: E402
@@ -52,6 +54,11 @@ def build_lstm_model(input_shape, num_classes=3, dropout_rate=0.4, l2_rate=1e-4)
     return model
 
 def main(args):
+    # Reproducibility
+    np.random.seed(42)
+    random.seed(42)
+    tf.random.set_seed(42)
+
     print("🚀 Starting LSTM training…")
 
     # Load data
@@ -69,6 +76,9 @@ def main(args):
     class_weight_dict = dict(zip(classes, weights))
     print(f"Using class weights: {class_weight_dict}")
 
+    alpha = args.focal_alpha if args.focal_alpha is not None else weights / weights.sum()
+    print(f"Focal loss alpha: {alpha}")
+
     # Build & compile
     input_shape = X_train.shape[1:]  # (time_steps, features)
     num_classes = y_train.shape[1]
@@ -80,14 +90,14 @@ def main(args):
     )
     optimizer = Adam(learning_rate=args.learning_rate, clipnorm=args.clipnorm)
     model.compile(
-        loss=focal_loss(gamma=args.focal_gamma, alpha=args.focal_alpha),
+        loss=focal_loss(gamma=args.focal_gamma, alpha=alpha),
         optimizer=optimizer,
         metrics=['accuracy', f1_m]
     )
 
     # Callbacks
     callbacks = [
-        EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True, verbose=1),
+        EarlyStopping(monitor='val_loss', patience=6, restore_best_weights=True, verbose=1),
         ModelCheckpoint(filepath=args.checkpoint, monitor='val_loss', save_best_only=True, verbose=1),
         ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=2, min_lr=1e-6, verbose=1),
         TensorBoard(log_dir=args.log_dir, histogram_freq=1)
@@ -121,7 +131,8 @@ if __name__ == '__main__':
     parser.add_argument('--dropout_rate', type=float, default=0.4,             help='Dropout rate')
     parser.add_argument('--l2_rate',      type=float, default=1e-4,            help='L2 regularization rate')
     parser.add_argument('--focal_gamma',  type=float, default=2.0,             help='Focal loss gamma')
-    parser.add_argument('--focal_alpha',  type=float, default=0.25,            help='Focal loss alpha')
+    parser.add_argument('--focal_alpha',  type=float, default=None,
+                        help='Uniform focal loss alpha (overrides per-class computation from class frequencies)')
     parser.add_argument('--batch_size',   type=int,   default=32,              help='Batch size')
     parser.add_argument('--epochs',       type=int,   default=50,              help='Max epochs')
     parser.add_argument('--validation_split', type=float, default=0.2,         help='Validation split fraction')
